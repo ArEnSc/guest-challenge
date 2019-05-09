@@ -10,7 +10,6 @@ import UIKit
 import MapKit
 import Promises
 
-
 extension MKMapView {
     /// when we call this function, we have already added the annotations to the map, and just want all of them to be displayed.
     func fitAll() {
@@ -41,10 +40,11 @@ class ViewController: UIViewController, MKMapViewDelegate {
     
     let regionRadius: CLLocationDistance = 1000
     var currentPolyline:MKPolyline?
+
+    var lastFrameSize:CGRect?
     
     func showLoadingIndicator() {
        self.activityIndicator.startAnimating()
-       
     }
     
     func hideLoadingIndicator() {
@@ -64,11 +64,39 @@ class ViewController: UIViewController, MKMapViewDelegate {
         self.activityIndicator.layer.zPosition = 1
         
         self.mapView.delegate = self
-        
        
         self.startSearchButton.addTarget(self,
                                 action: #selector(startButtonPressed),
                                 for: .touchUpInside)
+        
+        
+        NotificationCenter.default.addObserver(self, selector: #selector(keyBoardWillShow(notification:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyBoardWillHide(notification:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+    
+    @objc
+    func keyBoardWillShow(notification: Notification) {
+        //handle appearing of keyboard here
+        let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+        self.lastFrameSize = frame
+       
+        print("Showing")
+        print(lastFrameSize)
+        UIView.animate(withDuration: 0.7) {
+            self.view.frame = CGRect(x: self.view.frame.origin.x, y: 0.0, width: self.view.frame.width, height: self.view.frame.height)
+        }
+        
+        UIView.animate(withDuration: 0.7) {
+            self.view.frame = CGRect(x: self.view.frame.origin.x, y: self.view.frame.origin.y - self.lastFrameSize!.height, width: self.view.frame.width, height: self.view.frame.height)
+        }
+    }
+    
+    @objc
+    func keyBoardWillHide(notification: Notification) {
+        //handle dismiss of keyboard here
+        UIView.animate(withDuration: 0.7) {
+            self.view.frame = CGRect(x: self.view.frame.origin.x, y: 0.0, width: self.view.frame.width, height: self.view.frame.height)
+        }
     }
     
     
@@ -103,14 +131,21 @@ class ViewController: UIViewController, MKMapViewDelegate {
     @objc
     func startButtonPressed() {
         // YYZ to YVR its -3 from that list
-        guard let airportPathFinder = self.airportPathFinder else { return }
+        self.showLoadingIndicator()
+        self.startSearchButton.isEnabled = false
         
-        airportPathFinder.airportPathesBetween(origin: self.airports[1], destination: self.airports[152])
-            .then { (airport) in
-             self.drawMap(with: airport)
+        guard let airportPathFinder = self.airportPathFinder else { return }
+        removeMapRenderings()
+        
+        airportPathFinder.airportPathesBetween(origin: self.airports[192], destination: self.airports[152])
+            .then { (airports) in
+             self.drawMap(with: airports)
              self.mapView.fitAll()
             }.catch { (error) in
                 self.displayErrorMessage(message: error.localizedDescription)
+            }.always {
+                self.hideLoadingIndicator()
+                self.startSearchButton.isEnabled = true
             }
     }
     
@@ -179,10 +214,8 @@ class ViewController: UIViewController, MKMapViewDelegate {
             self.hideLoadingIndicator()
         }
         
-        
-        
-        
     }
+
 
 }
 
