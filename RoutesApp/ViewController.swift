@@ -10,21 +10,16 @@ import UIKit
 import MapKit
 import Promises
 
-extension MKMapView {
-    /// when we call this function, we have already added the annotations to the map, and just want all of them to be displayed.
-    func fitAll() {
-        var zoomRect            = MKMapRect.null;
-        for annotation in annotations {
-            let annotationPoint = MKMapPoint(annotation.coordinate)
-            let pointRect       = MKMapRect(x: annotationPoint.x, y: annotationPoint.y, width: 0.01, height: 0.01);
-            zoomRect            = zoomRect.union(pointRect);
-        }
-        setVisibleMapRect(zoomRect, edgePadding: UIEdgeInsets(top: 100, left: 100, bottom: 100, right: 100), animated: true)
-    }
+class ViewController: UIViewController, MKMapViewDelegate, UITextFieldDelegate {
     
-}
-
-class ViewController: UIViewController, MKMapViewDelegate {
+    enum Error: String, Swift.Error, LocalizedError {
+        case toFieldEmpty = "Destination Field is Empty"
+        case fromFieldEmpty = "Origin Field is Empty"
+    
+        var errorDescription: String? {
+            return self.rawValue
+        }
+    }
 
     @IBOutlet weak var startSearchButton: UIButton!
     @IBOutlet weak var mapView: MKMapView!
@@ -44,6 +39,8 @@ class ViewController: UIViewController, MKMapViewDelegate {
     var lastFrameSize:CGRect?
     
     func showLoadingIndicator() {
+        self.activityIndicator.isHidden = false
+        
        self.activityIndicator.startAnimating()
     }
     
@@ -70,6 +67,7 @@ class ViewController: UIViewController, MKMapViewDelegate {
                                 for: .touchUpInside)
         
         
+        
         NotificationCenter.default.addObserver(self, selector: #selector(keyBoardWillShow(notification:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyBoardWillHide(notification:)), name: UIResponder.keyboardWillHideNotification, object: nil)
     }
@@ -77,11 +75,10 @@ class ViewController: UIViewController, MKMapViewDelegate {
     @objc
     func keyBoardWillShow(notification: Notification) {
         //handle appearing of keyboard here
+        // You can use the keyboard duration key also possibly the easing curve of that to animate the view out of the way. ;D
         let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
         self.lastFrameSize = frame
        
-        print("Showing")
-        print(lastFrameSize)
         UIView.animate(withDuration: 0.7) {
             self.view.frame = CGRect(x: self.view.frame.origin.x, y: 0.0, width: self.view.frame.width, height: self.view.frame.height)
         }
@@ -128,25 +125,53 @@ class ViewController: UIViewController, MKMapViewDelegate {
         self.present(alert, animated: true, completion: nil)
     }
     
+    
+    
+    func pullInputFields() -> Promise<(String,String)> {
+        return Promise({ (fullfill, reject) in
+            guard var fromInput = self.fromAirport.text,
+                fromInput.isEmpty == false else {
+                reject(Error.fromFieldEmpty)
+                return
+            }
+            guard var toInput = self.toAirport.text,
+                      toInput.isEmpty == false else {
+                reject(Error.toFieldEmpty)
+                return
+            }
+            
+            fromInput = fromInput.replacingOccurrences(of: " ", with: "")
+            toInput = toInput.replacingOccurrences(of: " ", with: "")
+            
+            fullfill((fromInput,toInput))
+        })
+    }
+
     @objc
     func startButtonPressed() {
-        // YYZ to YVR its -3 from that list
+            
         self.showLoadingIndicator()
+        self.view.endEditing(true)
         self.startSearchButton.isEnabled = false
         
         guard let airportPathFinder = self.airportPathFinder else { return }
         removeMapRenderings()
         
-        airportPathFinder.airportPathesBetween(origin: self.airports[192], destination: self.airports[152])
-            .then { (airports) in
-             self.drawMap(with: airports)
-             self.mapView.fitAll()
-            }.catch { (error) in
-                self.displayErrorMessage(message: error.localizedDescription)
-            }.always {
-                self.hideLoadingIndicator()
-                self.startSearchButton.isEnabled = true
-            }
+        pullInputFields().then { (arg0) -> Promise<[Airport]>  in
+            let (fromAirport, toAirport) = arg0
+            return all([airportPathFinder.airportExists(name: fromAirport),airportPathFinder.airportExists(name: toAirport)])
+        }.then { (airports) in
+            return airportPathFinder.airportPathesBetween(origin: airports[0], destination: airports[1])
+        }.then { (airports) in
+            self.drawMap(with: airports)
+            self.mapView.showAnnotations(self.mapView.annotations, animated: true)
+        }.catch { (error) in
+            
+            self.displayErrorMessage(message: error.localizedDescription)
+        }.always {
+            self.hideLoadingIndicator()
+            self.startSearchButton.isEnabled = true
+        }
     }
     
     func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
@@ -186,7 +211,6 @@ class ViewController: UIViewController, MKMapViewDelegate {
         }
     }
     
-  
     func centerMapOnLocation(location: CLLocation) {
         let coordinateRegion = MKCoordinateRegion(center: location.coordinate,
                                                   latitudinalMeters: regionRadius, longitudinalMeters: regionRadius)
@@ -207,11 +231,14 @@ class ViewController: UIViewController, MKMapViewDelegate {
         
         // loading display loading label block user
         self.showLoadingIndicator()
+        self.startSearchButton.isEnabled = false
+        
         all(service.getAirlines(),service.getRoutes(),service.getAirports())
         .then(on: .main) { (airlines, routes, airports) in
             self.airports = airports
             self.airportPathFinder = AirPortPathFinder(airports: airports, routes: routes)
             self.hideLoadingIndicator()
+            self.startSearchButton.isEnabled = true
         }
         
     }

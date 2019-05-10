@@ -87,12 +87,25 @@ class AirPortPathFinder {
    
     // localize these IRL ;D
     enum Error:String, Swift.Error, LocalizedError  {
-        case airportNotFound = "Airport Not Found Try Again"
+        
         case vertexNotFound = "Internal Error"
         case NoRouteBetweenAirports = "No Route Between Airports"
-        
+        case SameAirportSelected = "No Route Between The Same Airport"
         public var errorDescription: String? {
             return self.rawValue
+        }
+    }
+    
+    enum AirportError:Swift.Error, LocalizedError {
+        case airportNotFound(String)
+        public var errorDescription: String? {
+            switch self {
+            case .airportNotFound(let airport):
+                 return "Airport Not Found: \(airport)"
+            default:
+                break
+            }
+           return nil
         }
     }
     
@@ -120,12 +133,15 @@ class AirPortPathFinder {
                 globalGraph.add(.directed, from: v1, to: v2, weight: 1)
             }
         }
-        
     }
     
     func airportExists(name: String) -> Promise<Airport> {
         return Promise(on: queue, { (fullfill, reject) in
-            
+            if let vertex = self.vertexLookup[name] {
+                fullfill(vertex.data)
+            } else {
+                reject(AirportError.airportNotFound(name))
+            }
         })
     }
 
@@ -135,6 +151,11 @@ class AirPortPathFinder {
             guard let v1 = self.vertexLookup[origin.IATAThree],
                 let v2 = self.vertexLookup[destination.IATAThree] else {
                 reject(Error.vertexNotFound)
+                return
+            }
+            
+            if v1.data.IATAThree == v2.data.IATAThree {
+                reject(Error.SameAirportSelected)
                 return
             }
             
@@ -148,7 +169,6 @@ class AirPortPathFinder {
                 fullfill(path)
                 return
             }
-           
         })
     }
     
@@ -165,9 +185,7 @@ class AirPortPathFinder {
                     result.append(edge.source.data.IATAThree)
                 }
             }
-            
             fullfill(result)
-            
         })
     }
     
@@ -188,13 +206,17 @@ class AirPortPathFinder {
     
     // This is the function to call to get a list of airports
     public func airportPathesBetween(origin:Airport, destination:Airport) -> Promise<[Airport]> {
-        return Promise<[Airport]> { () -> [Airport] in
-            
-            let path = try await(self.shortestPathBetween(origin: origin, destination: destination))
-            let IATAThrees = try await(self.pathList(for: path))
-            let airports = try await(self.airports(for: IATAThrees))
-            
-            return airports
-        }
+        return Promise(on:queue, { (fullfill,reject)  in
+            self.shortestPathBetween(origin: origin, destination: destination)
+            .then({ (path) -> Promise<[String]> in
+                return self.pathList(for: path)
+            }).then({ (IATAThrees) in
+                self.airports(for: IATAThrees)
+            }).then(on: .main, { (airports) in
+                fullfill(airports)
+            }).catch(on: .main, { (error) in
+                reject(error)
+            })
+        })
     }
 }
